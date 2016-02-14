@@ -24,11 +24,57 @@ CKEDITOR.plugins.add( 'liveedit', {
 		if (!editor.config.saveTimeOut) editor.config.saveTimeOut=3000;
 		if (!editor.config.requestParameters) editor.config.requestParameters='';
 		// recursive timeout function is called when a request completes
+		var callUpdateCallBack=function(record) {
+			if (window[editor.config.updateCallBack]) window[editor.config.updateCallBack](record);
+		}
+		
+		function replaceContent(editor,content,record) {
+			// save cursor position/selection
+			var selection = editor.getSelection();
+			var range = selection.getRanges()[0];
+			if (range) {
+				var startPath=CSSelector(range.startContainer.$);
+				var startPathParts=startPath.split('>');
+				startPath=startPathParts.slice(0,startPathParts.length-1).join('>');
+				var endPath=CSSelector(range.startContainer.$);
+				var endPathParts=endPath.split('>');
+				endPath=endPathParts.slice(0,endPathParts.length-1).join('>');
+				var savedSelection={
+					startPath : startPath,
+					startOffset : range.startOffset,
+					endPath : endPath,
+					endOffset : range.endOffset
+				
+				};
+				// modify text
+				editor.setData(record.body);
+				lastModified=record.dt_modified;
+				callUpdateCallBack(record);
+				// restore selection
+				editor.focus();
+				var startElement=editor.document.findOne(savedSelection.startPath ).getFirst();
+				var endElement=editor.document.findOne(savedSelection.endPath ).getFirst();
+				// replace full selection
+				if (startElement && endElement) { 
+					var range = editor.createRange();
+					try {
+						range.setStart( startElement,savedSelection.startOffset );
+						range.setEnd( startElement,savedSelection.endOffset );
+						selection.selectRanges( [ range ] );
+					} catch (e) {
+						console.log(['FAIL REPLACE RANGE',e]);
+					}
+				}
+			} else {
+				// no selection exists so just modify text
+				editor.setData(record.body);
+				lastModified=record.dt_modified;
+				callUpdateCallBack(record);
+			}
+		}
+		
 		var startUpdatePoll = function(editor) {
 			pollUrl=editor.config.pollUrl;
-			var callUpdateCallBack=function(record) {
-				if (window[editor.config.updateCallBack]) window[editor.config.updateCallBack](record);
-			}
 			if (updateTimer) clearTimeout(updateTimer);
 			updateTimer=setTimeout(function() {
 				if (updatePollActive) {  
@@ -42,48 +88,7 @@ CKEDITOR.plugins.add( 'liveedit', {
 						console.log(JSON.stringify(content));
 						if (content && content.success ) {
 							if (content.success.length>0 && content.success[0].body) {
-								// save cursor position/selection
-								var selection = editor.getSelection();
-								var range = selection.getRanges()[0];
-								if (range) {
-									var startPath=CSSelector(range.startContainer.$);
-									var startPathParts=startPath.split('>');
-									startPath=startPathParts.slice(0,startPathParts.length-1).join('>');
-									var endPath=CSSelector(range.startContainer.$);
-									var endPathParts=endPath.split('>');
-									endPath=endPathParts.slice(0,endPathParts.length-1).join('>');
-									var savedSelection={
-										startPath : startPath,
-										startOffset : range.startOffset,
-										endPath : endPath,
-										endOffset : range.endOffset
-									
-									};
-									// modify text
-									editor.setData(content.success[0].body);
-									lastModified=content.success[0].dt_modified;
-									callUpdateCallBack(content.success[0]);
-									// restore selection
-									editor.focus();
-									var startElement=editor.document.findOne(savedSelection.startPath ).getFirst();
-									var endElement=editor.document.findOne(savedSelection.endPath ).getFirst();
-									// replace full selection
-									if (startElement && endElement) { 
-										var range = editor.createRange();
-										try {
-											range.setStart( startElement,savedSelection.startOffset );
-											range.setEnd( startElement,savedSelection.endOffset );
-											selection.selectRanges( [ range ] );
-										} catch (e) {
-											console.log(['FAIL REPLACE RANGE',e]);
-										}
-									}
-								} else {
-									// no selection exists so just modify text
-									editor.setData(content.success[0].body);
-									lastModified=content.success[0].dt_modified;
-									callUpdateCallBack(content.success[0]);
-								}
+								replaceContent(editor,content,content.success[0]);
 							}
 						}	
 					}).always(function() {
@@ -130,6 +135,7 @@ CKEDITOR.plugins.add( 'liveedit', {
 										).done(
 											function(response) {
 												if (response.success && response.success.id) {
+													replaceContent(editor,response,response.success); 
 													callSaveCallBack(response.success);
 													updatePollActive=true;
 													lastModified=response.success.dt_modified;
@@ -146,8 +152,9 @@ CKEDITOR.plugins.add( 'liveedit', {
 										} else if (response.success && response.success.length > 0) {
 											// reload with other changes
 											if (confirm('Your changes conflict with those made by another user. Click OK to reload with their changes or Cancel to force your changes?')) {
-												editor.setData(response.success[0].body); 
+												replaceContent(editor,response,response.success[0]); 
 												lastModified=response.success[0].dt_modified;
+												callUpdateCallBack(response.success[0]);
 												startUpdatePoll(editor);
 											// force these changes
 											} else {
